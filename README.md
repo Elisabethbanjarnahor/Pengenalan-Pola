@@ -7,98 +7,54 @@
 # Matkul : Pengolahan Citra
 
 
----
+# Penjelasan Arsitektur dan Alur Kerja Model
 
-## TUGAS 1: Implementasi KNN dari Nol (Fundamental)
+## 1. Alur Persiapan Data (Data Pipeline)
 
-### Output
-![foto](https://github.com/Elisabethbanjarnahor/Pengenalan-Pola/blob/c0ff3ded3b1890b4f0e66c82833a389c7725f6f5/foto-hasil/Screenshot%202026-05-29%20180734.png)
+![foto](https://github.com/Elisabethbanjarnahor/Pengenalan-Pola/blob/8ba7859882a0739993a0faff1a16c02e934db72b/foto-hasil/Screenshot%202026-05-31%20232556.png)
 
-### Deskripsi Tugas
-Mengimplementasikan algoritma K-Nearest Neighbors (KNN) dari nol tanpa menggunakan library pihak ketiga (`sklearn`), membandingkan hasilnya dengan performa `sklearn`, serta mengevaluasi pengaruh nilai $K = (1, 3, 5, 7, 10, 15)$ menggunakan teknik **5-Fold Cross-Validation**.
+Sebelum model kecerdasan buatan bisa belajar, data mentah (gambar) harus diubah menjadi format matematis yang bisa diproses oleh komputer.
 
-### Cara Kerja Algoritma
-1. **Pemisahan Data (K-Fold):** Dataset dibagi menjadi 5 bagian (*fold*). Secara bergantian, 4 bagian digunakan sebagai data latih dan 1 bagian sisanya sebagai data uji.
-2. **Perhitungan Jarak:** Mengukur jarak matematis antara setiap data uji terhadap seluruh data latih menggunakan rumus **Euclidean Distance**:
-   $$d = \sqrt{\sum_{i=1}^{n} (x_{uji,i} - x_{latih,i})^2}$$
-3. **Voting Mayoritas:** Mengurutkan data dari jarak terkecil, mengambil sejumlah $K$ tetangga terdekat, dan menentukan kelas prediksi berdasarkan label mayoritas yang muncul.
-
-### Hasil Pengujian dan Validasi Model
-Implementasi KNN yang dibangun dari nol berhasil menghasilkan akurasi yang **identik (sama persis)** dengan library `scikit-learn` pada pengujian *5-fold cross-validation* menggunakan dataset Iris. Hasil pengujian komparatif untuk setiap nilai $K$ adalah sebagai berikut:
-* **$K = 1$** : Rata-rata Akurasi **96.00%**
-* **$K = 3$** : Rata-rata Akurasi **96.67%**
-* **$K = 5$** : Rata-rata Akurasi **97.33%**
-* **$K = 7$** : Rata-rata Akurasi **97.33%**
-* **$K = 10$**: Rata-rata Akurasi **97.33%**
-* **$K = 15$**: Rata-rata Akurasi **97.33%**
-
-### Analisis dan Pembahasan
-* **Validasi Keakuratan Logika:** Kesamaan metrik akurasi 100% antara model kustom dengan `scikit-learn` membuktikan secara matematis bahwa fungsi perhitungan *Euclidean Distance* serta mekanisme *voting* tetangga terdekat yang dirancang dari scratch telah berjalan dengan akurat.
-* **Analisis Pengaruh Nilai K:**
-  * Pada $K=1$, akurasi berada di angka 96.00%. Nilai $K$ yang terlalu kecil rentan terhadap *noise* (titik data yang menyimpang) karena keputusan klasifikasi hanya bergantung pada 1 tetangga terdekat saja.
-  * Terjadi peningkatan performa menjadi 96.67% pada $K=3$ dan mencapai titik optimal sebesar 97.33% pada nilai $K=5, 7, 10,$ dan $15$.
-  * Nilai $K$ yang lebih besar membuat batas keputusan (*decision boundary*) menjadi lebih halus (*smooth*). Hal ini meningkatkan kemampuan generalisasi model terhadap data uji, meskipun jika terlalu besar berisiko menyebabkan *underfitting*.
+* **Pembuatan Dataset:** Fungsi `tf.keras.utils.image_dataset_from_directory` membaca struktur folder. Fungsi ini secara otomatis memberikan label angka (0 hingga 4) berdasarkan urutan abjad nama folder (daisy, dandelion, rose, sunflower, tulip).
+* **Standarisasi Dimensi:** Semua gambar dipaksa berubah ukuran menjadi 224x224 piksel. Ini wajib dilakukan karena lapisan jaringan saraf tiruan membutuhkan ukuran matriks input yang absolut dan seragam.
+* **Pemecahan Data (Splitting):** Data dibagi menjadi 80% data latih (untuk mengajar model) dan 20% data validasi (sebagai ujian tertutup untuk menguji apakah model benar-benar paham, bukan sekadar menghafal).
+* **Optimasi Memori:** Fungsi `prefetch(buffer_size=AUTOTUNE)` digunakan agar proses baca data dari hard disk berjalan paralel dengan proses komputasi di CPU/GPU. Ini mencegah terjadinya bottleneck atau antrean panjang saat pemrosesan.
 
 ---
 
-## TUGAS 2: Perbandingan Fitur Klasifikasi Tekstur (Menengah)
+## 2. Model 1: CNN dari Nol (Scratch)
 
-### Output
+![foto](https://github.com/Elisabethbanjarnahor/Pengenalan-Pola/blob/8ba7859882a0739993a0faff1a16c02e934db72b/foto-hasil/Screenshot%202026-05-31%20192346.png)
 
-![foto](https://github.com/Elisabethbanjarnahor/Pengenalan-Pola/blob/c0ff3ded3b1890b4f0e66c82833a389c7725f6f5/foto-hasil/Screenshot%202026-05-29%20185419.png)
+Pada pendekatan ini, arsitektur model dibangun lapis demi lapis. Otak dari model ini dimulai dari nol; nilai bobot (weights) matematikanya dimulai dari angka acak.
 
-### Deskripsi Tugas
-Membandingkan performa setidaknya 3 metode ekstraksi fitur tekstur komputer—**LBP, HOG, dan GLCM**—yang dikombinasikan dengan 2 jenis algoritma pengklasifikasi (*classifier*), yaitu **Support Vector Machine (SVM)** dan **Random Forest** pada dataset tekstur DTD (*Describable Textures Dataset*) simulasi.
-
-### Cara Kerja Ekstraksi Fitur & Model
-* **LBP (Local Binary Pattern):** Menganalisis tekstur mikro dengan membandingkan nilai biner intensitas piksel pusat terhadap 8 piksel tetangga di sekelilingnya secara melingkar.
-* **HOG (Histogram of Oriented Gradients):** Menangkap struktur bentuk dan tepi objek melalui distribusi orientasi arah kecerahan gradien gambar.
-* **GLCM (Gray-Level Co-occurrence Matrix):** Mengekstrak hubungan spasial piksel bertingkat abu-abu berdasarkan statistik *Contrast* dan *Homogeneity*.
-
-### Hasil Pengujian Akurasi
-Eksperimen pengujian klasifikasi tekstur menghasilkan performa berikut:
-* **LBP (Local Binary Pattern):** SVM meraih akurasi **16.7%**, sedangkan Random Forest mencapai **100.0%**.
-* **HOG (Histogram of Oriented Gradients):** SVM meraih akurasi **50.0%**, sedangkan Random Forest mencapai **100.0%**.
-* **GLCM (Gray-Level Co-occurrence Matrix):** Baik SVM maupun Random Forest sama-sama sukses mendapatkan akurasi sempurna **100.0%**.
-
-### Analisis Mendalam Performa Sistem
-* **Keunggulan Random Forest Pada Fitur Tekstur:** Random Forest menunjukkan performa yang luar biasa stabil dengan meraih akurasi 100% pada ketiga metode ekstraksi fitur (LBP, HOG, GLCM). Hal ini terjadi karena Random Forest berbasis *Decision Trees* yang sangat kuat dalam menangkap pola non-linear dan batasan keputusan (*decision boundaries*) yang kompleks dari data tekstur buatan (garis, kotak, dan bintik), tanpa sensitif terhadap skala nilai fiturnya.
-* **Kelemahan SVM Linier pada LBP dan HOG:** Model SVM yang digunakan menggunakan kernel linier. Pada fitur LBP (16.7%) and HOG (50.0%), nilai fiturnya memiliki dimensi dan sebaran statistik histogram yang membuat data kelas tekstur tersebut tidak dapat dipisahkan secara linier sempurna (*non-linearly separable*). Oleh karena itu, akurasi SVM jeblok pada kedua fitur ini.
-* **GLCM Menjadi Fitur Terbaik untuk Kedua Model:** Fitur GLCM yang mengekstrak nilai statistik *Contrast* dan *Homogeneity* sukses membawa kedua model (SVM dan Random Forest) meraih akurasi 100%. Ini membuktikan bahwa hubungan spasial antar-piksel (derajat keabuan) adalah fitur yang paling diskriminatif dan paling mudah dipisahkan, bahkan oleh model linier sekalipun, untuk membedakan ketiga jenis tekstur pada dataset simulasi ini.
+* **Rescaling:** Nilai piksel warna pada gambar aslinya berada di rentang 0 hingga 255. Lapisan ini menormalkannya menjadi skala 0 hingga 1. Jaringan saraf bekerja jauh lebih optimal dan stabil dengan angka desimal kecil.
+* **Conv2D (Convolutional Layer):** Lapisan ini bertugas menyapu seluruh area gambar menggunakan filter matriks (ukuran 3x3). Tujuannya adalah mengekstrak fitur visual, mulai dari fitur tingkat rendah (garis, sudut, batas warna) hingga fitur tingkat tinggi (bentuk kelopak).
+* **MaxPooling2D:** Lapisan ini melakukan kompresi pada hasil ekstraksi Conv2D. Ia mengambil nilai piksel dominan pada area tertentu sehingga dimensi gambar mengecil, namun informasi pentingnya tetap dipertahankan. Ini sangat menghemat beban komputasi.
+* **Flatten:** Matriks gambar dua dimensi diratakan menjadi struktur larik (array) satu dimensi agar bisa dibaca oleh lapisan pembuat keputusan.
+* **Dense & Dropout:** Lapisan Dense berfungsi memetakan fitur yang telah diekstrak ke dalam 5 kategori akhir. Lapisan Dropout (0.5) dengan sengaja mematikan 50% jalur saraf secara acak pada setiap iterasi. Tujuannya adalah mencegah model mengalami overfitting (kondisi di mana model menghafal data latih dengan sempurna, tetapi gagal menebak data baru).
 
 ---
 
-## TUGAS 3: Transfer Learning untuk Dataset Kustom (Lanjutan)
+## 3. Model 2: Transfer Learning (MobileNetV2)
+Ini adalah pendekatan yang lebih modern dan efisien di industri. Daripada melatih jaringan dari nol, metode ini meminjam model (MobileNetV2) yang sudah dilatih oleh Google menggunakan dataset raksasa (ImageNet) yang berisi jutaan gambar dengan ribuan kategori objek.
 
-### Output
-
-![foto](https://github.com/Elisabethbanjarnahor/Pengenalan-Pola/blob/c0ff3ded3b1890b4f0e66c82833a389c7725f6f5/foto-hasil/Screenshot%202026-05-29%20193044.png)
-
-### Deskripsi Tugas
-Menerapkan teknik **Transfer Learning** menggunakan arsitektur bawaan yang sudah terlatih (**MobileNetV2**) untuk mengklasifikasikan dataset citra kustom (5 kelas, minimal 100 gambar per kelas), kemudian membandingkan kinerjanya terhadap model **CNN biasa (Scratch)** yang dibangun dan dilatih dari nol, serta melakukan analisis error.
-
-### Cara Kerja Arsitektur
-* **CNN Scratch:** Model melatih parameter filter konvolusi secara mandiri dari awal. Memerlukan dataset masif agar konvergen dan rentan *overfitting* pada data kecil.
-* **Transfer Learning (MobileNetV2):** Memanfaatkan lapisan pembawa fitur kaya (*feature extractor*) hasil pelatihan terdahulu pada jutaan citra ImageNet, kemudian membekukan bobot asli (*freeze*) dan menyesuaikan lapisan atas (*dense layer*) untuk mengenali kelas kustom baru.
-
-### Hasil Pengujian Perbandingan
-Pengujian performa klasifikasi citra pada dataset kustom menghasilkan nilai akurasi validasi akhir sebagai berikut:
-* **CNN Biasa (Scratch Model):** **20.00%**
-* **Transfer Learning (MobileNetV2):** **24.00%**
-
-### Analisis dan Pembahasan
-* **Interpretasi Performa:** Hasil akurasi CNN Biasa berada tepat di angka 20.00%. Nilai ini mencerminkan batas bawah performa klasifikasi 5 kelas secara acak (*baseline probability* 1/5). Hal ini membuktikan bahwa model CNN dari nol sangat kesulitan melakukan konvergensi dan mengenali pola esensial jika dihadapkan pada batasan jumlah sampel data kustom yang minimal (100 gambar per kelas) tanpa adanya optimasi arsitektur yang mendalam.
-* **Keunggulan MobileNetV2:** Model MobileNetV2 berhasil mendapatkan akurasi lebih tinggi, yaitu 24.00%. Keunggulan ini didapat karena MobileNetV2 bertindak sebagai *feature extractor* yang kuat. Bobot (*weights*) model ini telah terlatih sebelumnya (*pre-trained*) menggunakan dataset raksasa ImageNet, sehingga ia memiliki modal pemahaman struktur visual (seperti bentuk tepi, pencahayaan, dan gradasi warna) yang jauh lebih baik daripada model biasa.
-
-### Analisis Error dan Kasus Sulit (*Error Analysis*)
-Melalui proses evaluasi data uji, diidentifikasi beberapa faktor utama yang memicu terjadinya kasus sulit klasifikasi (*misclassification*) pada dataset kustom:
-* **Keterbatasan Kuantitas Data (*Data Scarcity*):** Sesuai instruksi, batas minimal 100 gambar per kelas merupakan jumlah yang sangat minim bagi sebuah arsitektur *Deep Learning* konvensional. Hal ini memicu terjadinya *overfitting* di mana model hanya menghafal data latih dan gagal melakukan generalisasi pada data uji.
-* **Tingginya Kemiripan Visual Antar Kelas (*High Inter-class Similarity*):** Kasus salah prediksi sering terjadi pada objek antar-kelas yang memiliki karakteristik bentuk geometris atau warna dominan yang mirip, sehingga membingungkan lapisan *Dense Layer* di bagian akhir klasifikasi.
-* **Gangguan Latar Belakang (*Background Noise*):** Gambar kustom sering kali diambil dengan kondisi lingkungan yang tidak steril (latar belakang ramai). Akibatnya, model rentan salah fokus dengan mengekstrak fitur *background* alih-alih objek utama yang ingin diklasifikasikan.
+* **Pembekuan Basis Pengetahuan (Freeze Weights):** Baris `base_model.trainable = False` adalah kunci utama dari metode ini. Jaringan MobileNetV2 sudah memiliki matriks bobot yang sangat ahli mendeteksi tekstur, kedalaman, dan bentuk geometris yang kompleks. Dengan membekukannya, pengetahuan dasar tersebut tidak akan hancur atau tertimpa saat dilatih ulang dengan dataset bunga yang jumlahnya sangat kecil.
+* **Global Average Pooling:** Lapisan ini berfungsi sebagai alternatif yang lebih canggih dari lapisan Flatten. Alih-alih meratakan semua data yang menghasilkan jutaan parameter, lapisan ini mencari nilai rata-rata dari setiap peta fitur (feature map). Hal ini membuat model jauh lebih ringan dan kebal terhadap overfitting.
+* **Classifier Head:** Bagian ekor dari arsitektur MobileNetV2 asli dibuang, lalu diganti dengan lapisan Dense baru yang memiliki 5 output saja. Pada proses pelatihan (training), komputasi yang berat hanya terjadi pada bagian ujung ini saja, tugasnya murni belajar mencocokkan fitur visual tingkat tinggi milik MobileNetV2 ke 5 nama bunga tersebut.
 
 ---
 
-## syarat 
-Pastikan dependensi berikut sudah terpasang di komputer Anda sebelum menjalankan skrip kode:
-```bash
-pip install numpy matplotlib scikit-learn scikit-image tensorflow
+## 4. Evaluasi dan Analisis Tingkat Lanjut
+
+![foto](https://github.com/Elisabethbanjarnahor/Pengenalan-Pola/blob/8ba7859882a0739993a0faff1a16c02e934db72b/foto-hasil/Screenshot%202026-05-31%20213114.png)
+
+![foto](https://github.com/Elisabethbanjarnahor/Pengenalan-Pola/blob/8ba7859882a0739993a0faff1a16c02e934db72b/foto-hasil/Screenshot%202026-05-31%20213224.png)
+
+![foto](https://github.com/Elisabethbanjarnahor/Pengenalan-Pola/blob/8ba7859882a0739993a0faff1a16c02e934db72b/foto-hasil/Screenshot%202026-05-31%20213236.png)
+
+Kode tersebut tidak berhenti hanya dengan menampilkan angka akurasi, melainkan melakukan analisis mendalam mengenai titik buta (blind spot) dari model kecerdasan buatan.
+
+* **Grafik Perbandingan (Plotting):** Visualisasi ini akan membuktikan bahwa kurva akurasi MobileNetV2 naik jauh lebih tajam dan stabil pada iterasi awal dibandingkan CNN biasa. Grafik Loss juga akan menunjukkan kapan model mulai menghafal (biasanya saat grafik loss validasi mulai berbelok naik).
+* **Confusion Matrix (Matriks Kebingungan):** Ini adalah tabel diagnostik. Sumbu Y adalah jawaban yang benar (kunci jawaban), dan Sumbu X adalah tebakan model. Angka di luar garis diagonal utama menunjukkan letak kesalahan model. Ini berguna untuk mendeteksi kelemahan spesifik. Jika matriks menunjukkan angka tinggi pada perpotongan baris "Rose" dan kolom "Tulip", artinya model secara sistematis kesulitan membedakan fitur spesifik antara Mawar dan Tulip.
+* **Misclassification Analysis (Analisis Kasus Sulit):** Program menjalankan prediksi ulang menggunakan data ujian, kemudian membandingkan array jawaban asli dengan array hasil prediksi. Fungsi `np.where(y_pred != y_true)` akan menangkap secara presisi indeks data gambar mana saja yang tebakannya meleset. Gambar tersebut kemudian ditampilkan beserta nilai probabilitas kepercayaan (confidence rate). Ini memberikan perspektif logis bagi engineer untuk menilai apakah kualitas gambar aslinya memang buruk, sudut pandangnya aneh, atau apakah arsitektur modelnya yang perlu disesuaikan ulang.
