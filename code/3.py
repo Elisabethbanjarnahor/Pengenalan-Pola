@@ -1,103 +1,189 @@
+import os
+import warnings
+import logging
+
+# ==========================================
+# 1. BUNGKAM WARNING TENSORFLOW 
+# ==========================================
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+warnings.filterwarnings('ignore')
+logging.getLogger('tensorflow').setLevel(logging.FATAL)
+
 import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
-from tensorflow.keras import layers, models
-from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras import layers, models, applications
+from sklearn.metrics import classification_report, confusion_matrix
+import seaborn as sns
 
-# ==========================================================
-# 1. SIMULASI GENERATE DATASET KUSTOM (5 KELAS @100 GAMBAR)
-# ==========================================================
-print("=== 1. Membuat Dataset Simulasi Kustom (5 Kelas) ===")
-np.random.seed(42)
+# ==========================================
+# 2. KONFIGURASI DATASET
+# ==========================================
+DATASET_DIR = r"C:\mydocument\praktik_p_citra\flowers"
+BATCH_SIZE = 32
+IMG_SIZE = (224, 224)
+EPOCHS = 10
 
-# Mengikuti standar input MobileNetV2: 224x224 piksel dengan 3 channel (RGB)
-X_dummy = np.random.rand(500, 224, 224, 3).astype(np.float32)
-# Membuat label acak untuk 5 kelas (0, 1, 2, 3, 4)
-y_dummy = np.random.randint(0, 5, 500)
+print("=" * 50)
+print("Memuat Dataset dan Mempersiapkan Gambar...")
+print("=" * 50)
 
-# Membagi data menjadi 80% Latih (400 gambar) dan 20% Uji (100 gambar)
-X_train, X_test = X_dummy[:400], X_dummy[400:]
-y_train, y_test = y_dummy[:400], y_dummy[400:]
+# Load Data Training (80%) 
+train_dataset = tf.keras.utils.image_dataset_from_directory(
+    DATASET_DIR,
+    validation_split=0.2,
+    subset="training",
+    seed=42,
+    image_size=IMG_SIZE,
+    batch_size=BATCH_SIZE
+)
 
-# ==========================================================
-# 2. MEMBANGUN MODEL CNN DARI NOL (SCRATCH)
-# ==========================================================
-print("\n=== 2. Membangun Model CNN Biasa (Dari Nol) ===")
-model_scratch = models.Sequential([
-    layers.Conv2D(16, (3, 3), activation='relu', input_shape=(224, 224, 3)),
-    layers.MaxPooling2D((2, 2)),
-    layers.Conv2D(32, (3, 3), activation='relu'),
-    layers.MaxPooling2D((2, 2)),
+# Load Data Validation (20%) 
+val_dataset = tf.keras.utils.image_dataset_from_directory(
+    DATASET_DIR,
+    validation_split=0.2,
+    subset="validation",
+    seed=42,
+    image_size=IMG_SIZE,
+    batch_size=BATCH_SIZE
+)
+
+class_names = train_dataset.class_names
+print(f"Kelas yang terdeteksi: {class_names}")
+
+# Optimasi performa memori
+AUTOTUNE = tf.data.AUTOTUNE
+train_dataset = train_dataset.prefetch(buffer_size=AUTOTUNE)
+val_dataset = val_dataset.prefetch(buffer_size=AUTOTUNE)
+
+# ==========================================
+# 3. MODEL 1: CNN DARI NOL (SCRATCH)
+# ==========================================
+print("\n[1/2] Melatih Model CNN dari Nol (Scratch)...")
+cnn_model = models.Sequential([
+    layers.Rescaling(1./255, input_shape=(IMG_SIZE[0], IMG_SIZE[1], 3)),
+    layers.Conv2D(32, 3, padding='same', activation='relu'),
+    layers.MaxPooling2D(),
+    layers.Conv2D(64, 3, padding='same', activation='relu'),
+    layers.MaxPooling2D(),
+    layers.Conv2D(128, 3, padding='same', activation='relu'),
+    layers.MaxPooling2D(),
     layers.Flatten(),
-    layers.Dense(64, activation='relu'),
-    layers.Dense(5, activation='softmax')  # 5 Output kelas
+    layers.Dense(128, activation='relu'),
+    layers.Dropout(0.5),
+    layers.Dense(len(class_names), activation='softmax')
 ])
 
-model_scratch.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+cnn_model.compile(optimizer='adam', 
+                  loss='sparse_categorical_crossentropy',
+                  metrics=['accuracy'])
 
-# Train Model Scratch (Cukup 3 epoch agar cepat untuk simulasi kuliah)
-print("Training Model CNN Scratch...")
-history_scratch = model_scratch.fit(X_train, y_train, epochs=3, validation_data=(X_test, y_test), batch_size=32)
+history_cnn = cnn_model.fit(train_dataset, validation_data=val_dataset, epochs=EPOCHS)
 
-# ==========================================================
-# 3. MEMBANGUN MODEL TRANSFER LEARNING (MOBILENETV2)
-# ==========================================================
-print("\n=== 3. Membangun Model Transfer Learning (MobileNetV2) ===")
-# Mengambil base model MobileNetV2 yang sudah terlatih (pre-trained) di dataset ImageNet
-base_model = MobileNetV2(input_shape=(224, 224, 3), include_top=False, weights='imagenet')
-base_model.trainable = False  # Membekukan bobot asli agar tidak berubah
+# ==========================================
+# 4. MODEL 2: TRANSFER LEARNING (MobileNetV2)
+# ==========================================
+print("\n[2/2] Melatih Model Transfer Learning (MobileNetV2)...")
+preprocess_input = tf.keras.applications.mobilenet_v2.preprocess_input
+base_model = applications.MobileNetV2(input_shape=(IMG_SIZE[0], IMG_SIZE[1], 3),
+                                      include_top=False,
+                                      weights='imagenet')
 
-model_tl = models.Sequential([
-    base_model,
-    layers.GlobalAveragePooling2D(),
-    layers.Dense(64, activation='relu'),
-    layers.Dense(5, activation='softmax')
-])
+base_model.trainable = False # Bekukan bobot bawaan
 
-model_tl.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+inputs = tf.keras.Input(shape=(IMG_SIZE[0], IMG_SIZE[1], 3))
+x = preprocess_input(inputs)
+x = base_model(x, training=False)
+x = layers.GlobalAveragePooling2D()(x)
+x = layers.Dropout(0.2)(x)
+outputs = layers.Dense(len(class_names), activation='softmax')(x)
+tl_model = tf.keras.Model(inputs, outputs)
 
-# Train Model Transfer Learning
-print("Training Model Transfer Learning (MobileNetV2)...")
-history_tl = model_tl.fit(X_train, y_train, epochs=3, validation_data=(X_test, y_test), batch_size=32)
+tl_model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001),
+                 loss='sparse_categorical_crossentropy',
+                 metrics=['accuracy'])
 
-# ==========================================================
-# 4. VISUALISASI PERBANDINGAN PERFORMA & ANALISIS ERROR
-# ==========================================================
-acc_scratch = history_scratch.history['val_accuracy'][-1] * 100
-acc_tl = history_tl.history['val_accuracy'][-1] * 100
+history_tl = tl_model.fit(train_dataset, validation_data=val_dataset, epochs=EPOCHS)
 
-# Plot Diagram Batang Perbandingan Akurasi
-fig, ax = plt.subplots(figsize=(7, 5))
-models_label = ['CNN Biasa (Scratch)', 'Transfer Learning (MobileNetV2)']
-accuracies = [acc_scratch, acc_tl]
+# ==========================================
+# 5. PERBANDINGAN PERFORMA (VISUALISASI GRAFIK)
+# ==========================================
+plt.figure(figsize=(12,5))
 
-bars = ax.bar(models_label, accuracies, color=['#e74c3c', '#2ecc71'], width=0.5)
-ax.set_ylabel('Akurasi Validasi (%)')
-ax.set_title('Perbandingan Model: CNN Biasa vs Transfer Learning')
-ax.set_ylim(0, 110)
-ax.grid(axis='y', linestyle='--', alpha=0.5)
+# Plot Akurasi
+plt.subplot(1, 2, 1)
+plt.plot(history_cnn.history['val_accuracy'], label='CNN Scratch (Val)', color='#BA55D3', linestyle='--')
+plt.plot(history_tl.history['val_accuracy'], label='MobileNetV2 (Val)', color='#4B0082', linewidth=2)
+plt.title('Perbandingan Akurasi Validasi', fontweight='bold')
+plt.xlabel('Epoch')
+plt.ylabel('Akurasi')
+plt.legend()
+plt.grid(True, linestyle='--', alpha=0.6)
 
-for bar in bars:
-    height = bar.get_height()
-    ax.annotate(f'{height:.2f}%',
-                xy=(bar.get_x() + bar.get_width() / 2, height),
-                xytext=(0, 3), textcoords="offset points", ha='center', va='bottom')
+# Plot Loss
+plt.subplot(1, 2, 2)
+plt.plot(history_cnn.history['val_loss'], label='CNN Scratch (Val)', color='#BA55D3', linestyle='--')
+plt.plot(history_tl.history['val_loss'], label='MobileNetV2 (Val)', color='#4B0082', linewidth=2)
+plt.title('Perbandingan Loss Validasi', fontweight='bold')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.legend()
+plt.grid(True, linestyle='--', alpha=0.6)
 
-print("\nMenampilkan Grafik Perbandingan... (Tutup grafik untuk melihat kesimpulan teks)")
+plt.tight_layout()
 plt.show()
 
-# Analisis Error (Identifikasi Kasus Sulit)
-print("\n" + "="*60)
-print("ANALISIS ERROR & IDENTIFIKASI KASUS SULIT (TUGAS 3)")
-print("="*60)
-# Simulasi prediksi untuk analisis error
-predictions = model_tl.predict(X_test)
-pred_classes = np.argmax(predictions, axis=1)
-salah_prediksi = np.where(pred_classes != y_test)[0]
+# ==========================================
+# 6. ANALISIS ERROR & IDENTIFIKASI KASUS SULIT
+# ==========================================
+print("\n--- ANALISIS ERROR (MobileNetV2) ---")
+print("Mengekstrak gambar untuk analisis...")
 
-print(f"Total data uji: {len(y_test)} gambar")
-print(f"Jumlah gambar yang salah diprediksi oleh MobileNetV2: {len(salah_prediksi)} gambar")
-print("\nFaktor Penyebab Kasus Sulit (Analisis Teoretis Dataset Kustom):")
-print("1. Keterbatasan Data: Jumlah data (100 per kelas) tergolong sangat kecil bagi CNN biasa untuk belajar fitur dari nol.")
-print("2. Analisis Error Gambaran Fisik: Kasus sulit klasifikasi biasanya terjadi pada gambar yang memiliki latar belakang (background) yang terlalu ramai / mirip antar kelas, atau objek utama yang mengalami salah rotasi dan pencahayaan ekstrem.")
-print("="*60)
+# Ekstrak data gambar dan label secara manual agar urutannya terkunci aman
+val_images = []
+val_labels = []
+
+for x, y in val_dataset.unbatch():
+    val_images.append(x.numpy())
+    val_labels.append(y.numpy())
+
+val_images = np.array(val_images)
+y_true = np.array(val_labels)
+
+print("Melakukan prediksi pada data uji...")
+y_pred_probs = tl_model.predict(val_images, batch_size=BATCH_SIZE)
+y_pred = np.argmax(y_pred_probs, axis=1)
+
+misclassified_indices = np.where(y_pred != y_true)[0]
+print(f"\n[Hasil] Total gambar salah prediksi: {len(misclassified_indices)} dari {len(y_true)} gambar uji.")
+
+# Visualisasi Confusion Matrix
+cm = confusion_matrix(y_true, y_pred)
+plt.figure(figsize=(8,6))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Purples', 
+            xticklabels=class_names, yticklabels=class_names)
+plt.title('Confusion Matrix - MobileNetV2', fontweight='bold', pad=15)
+plt.ylabel('Label Asli (True)')
+plt.xlabel('Prediksi Model (Predicted)')
+plt.show()
+
+# Tampilkan 4 contoh kasus sulit
+if len(misclassified_indices) > 0:
+    plt.figure(figsize=(12, 10))
+    plt.suptitle("Kasus Sulit (Salah Prediksi oleh MobileNetV2)", fontsize=16, fontweight='bold')
+    
+    for i, bad_idx in enumerate(misclassified_indices[:4]):
+        plt.subplot(2, 2, i + 1)
+        img = val_images[bad_idx].astype("uint8")
+        plt.imshow(img)
+        
+        true_label = class_names[y_true[bad_idx]]
+        pred_label = class_names[y_pred[bad_idx]]
+        confidence = y_pred_probs[bad_idx][y_pred[bad_idx]] * 100
+        
+        plt.title(f"Label Asli: {true_label.upper()}\nDitebak: {pred_label.upper()} ({confidence:.1f}%)",
+                  color='darkred', fontweight='bold')
+        plt.axis('off')
+        
+    plt.tight_layout()
+    plt.show()
