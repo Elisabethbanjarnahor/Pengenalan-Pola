@@ -1,134 +1,152 @@
+import os
 import numpy as np
 import matplotlib.pyplot as plt
+from skimage import io, color, transform
+from skimage.feature import local_binary_pattern, hog, graycomatrix, graycoprops
+from sklearn.model_selection import train_test_split
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
-from sklearn.model_selection import train_test_split
-from skimage.feature import local_binary_pattern, hog, graycomatrix, graycoprops
+import warnings
 
-# ==========================================================
-# 1. SIMULASI GENERATE DATASET TEKSTUR (DUMMY DATASET DTD)
-# ==========================================================
-def buat_dataset_tekstur_dummy(jumlah_sampel=60):
-    np.random.seed(42)
-    X_raw = []
-    y = []
-    for kelas in range(3):
-        for _ in range(jumlah_sampel // 3):
-            if kelas == 0:
-                img = np.zeros((64, 64))
-                img[:, ::4] = 255
-            elif kelas == 1:
-                img = np.zeros((64, 64))
-                img[::4, :] = 255
-                img[:, ::4] = 255
-            else:
-                img = np.random.randint(0, 256, (64, 64))
-            img = img + np.random.normal(0, 10, (64, 64))
-            img = np.clip(img, 0, 255).astype(np.uint8)
-            
-            X_raw.append(img)
-            y.append(kelas)
-            
-    return X_raw, np.array(y)
+# Mengabaikan warning kecil agar output terminal bersih dan rapi
+warnings.filterwarnings('ignore')
 
-# ==========================================================
+# ==========================================
+# 1. KONFIGURASI DATASET
+# ==========================================
+DATASET_PATH = r"C:\mydocument\praktik_p_citra"
+IMG_SIZE = (128, 128)
+# 5 kelas tekstur sesuai yang ada di folder kamu
+class_folders = ['banded', 'blotchy', 'braided', 'bubbly', 'bumpy']
+
+# ==========================================
 # 2. FUNGSI EKSTRAKSI FITUR (LBP, HOG, GLCM)
-# ==========================================================
-def ekstrak_lbp(images):
-    fitur_lbp = []
-    for img in images:
-        lbp = local_binary_pattern(img, P=8, R=1, method='uniform')
-        hist, _ = np.histogram(lbp.ravel(), bins=np.arange(0, 11), density=True)
-        fitur_lbp.append(hist)
-    return np.array(fitur_lbp)
+# ==========================================
+def extract_lbp(gray_img):
+    radius = 1
+    n_points = 8 * radius
+    lbp = local_binary_pattern(gray_img, n_points, radius, method='uniform')
+    
+    # PERBAIKAN DI BARIS INI:
+    # Ubah n_bins = int(lbp.max() + 1) menjadi:
+    n_bins = n_points + 2
+    
+    hist, _ = np.histogram(lbp.ravel(), bins=n_bins, range=(0, n_bins), density=True)
+    return hist
 
-def ekstrak_hog(images):
-    fitur_hog = []
-    for img in images:
-        hf = hog(img, orientations=8, pixels_per_cell=(16, 16), 
-                 cells_per_block=(1, 1), visualize=False)
-        fitur_hog.append(hf)
-    return np.array(fitur_hog)
+def extract_hog(gray_img):
+    features = hog(gray_img, orientations=9, pixels_per_cell=(16, 16),
+                   cells_per_block=(2, 2), visualize=False)
+    return features
 
-def ekstrak_glcm(images):
-    fitur_glcm = []
-    for img in images:
-        glcm = graycomatrix(img, distances=[1], angles=[0], levels=256, symmetric=True, normed=True)
-        contrast = graycoprops(glcm, 'contrast')[0, 0]
-        homogeneity = graycoprops(glcm, 'homogeneity')[0, 0]
-        fitur_glcm.append([contrast, homogeneity])
-    return np.array(fitur_glcm)
+def extract_glcm(gray_img):
+    img_uint = (gray_img * 255).astype(np.uint8)
+    glcm = graycomatrix(img_uint, distances=[1],
+                        angles=[0, np.pi/4, np.pi/2, 3*np.pi/4],
+                        levels=256, symmetric=True, normed=True)
+    contrast = graycoprops(glcm, 'contrast').ravel()
+    correlation = graycoprops(glcm, 'correlation').ravel()
+    energy = graycoprops(glcm, 'energy').ravel()
+    homogeneity = graycoprops(glcm, 'homogeneity').ravel()
+    return np.hstack([contrast, correlation, energy, homogeneity])
 
-# Load data citra simulasi tekstur
-X_raw, y = buat_dataset_tekstur_dummy()
+# ==========================================
+# 3. LOADING DATA DAN PROSES EKSTRAKSI
+# ==========================================
+print("=" * 60)
+print("Mulai memuat dataset DTD dan mengekstrak fitur...")
+print("=" * 60)
 
-# Ekstraksi ke 3 metode
-X_lbp = ekstrak_lbp(X_raw)
-X_hog = ekstrak_hog(X_raw)
-X_glcm = ekstrak_glcm(X_raw)
+features_lbp, features_hog, features_glcm, labels = [], [], [], []
 
-daftar_fitur = {'LBP': X_lbp, 'HOG': X_hog, 'GLCM': X_glcm}
-daftar_classifier = {'SVM': SVC(kernel='linear'), 'Random Forest': RandomForestClassifier(random_state=42)}
-nama_fitur_list = list(daftar_fitur.keys())
+for idx, class_name in enumerate(class_folders):
+    class_dir = os.path.join(DATASET_PATH, class_name)
+    # Ambil semua file gambar di dalam folder kelas
+    img_names = [f for f in os.listdir(class_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+    print(f"-> Memproses kelas [{class_name}] : Ditemukan {len(img_names)} gambar. Silakan tunggu...")
+    
+    for img_name in img_names:
+        img_path = os.path.join(class_dir, img_name)
+        try:
+            img = io.imread(img_path)
+            if img.ndim == 3:
+                gray = color.rgb2gray(img)
+            else:
+                gray = img / 255.0
+            
+            gray_resized = transform.resize(gray, IMG_SIZE)
+            
+            # Ekstraksi fitur
+            features_lbp.append(extract_lbp(gray_resized))
+            features_hog.append(extract_hog(gray_resized))
+            features_glcm.append(extract_glcm(gray_resized))
+            labels.append(idx)
+        except Exception as e:
+            continue
 
-# ==========================================================
-# 3. PROSES TRAINING & EVALUASI (SUDAH DIPERBAIKI)
-# ==========================================================
-hasil_akurasi = {'SVM': [], 'Random Forest': []}
+X_lbp = np.array(features_lbp)
+X_hog = np.array(features_hog)
+X_glcm = np.array(features_glcm)
+y = np.array(labels)
 
-for clf_name, clf in daftar_classifier.items():
-    for f_name in nama_fitur_list:
-        X_fitur = daftar_fitur[f_name]
-        X_train, X_test, y_train, y_test = train_test_split(X_fitur, y, test_size=0.2, random_state=42)
-        
+print("\n" + "=" * 60)
+print("PROSES EKSTRAKSI SELESAI!")
+print(f"Total gambar yang berhasil diproses: {len(y)}")
+print("=" * 60 + "\n")
+
+# ==========================================
+# 4. KLASIFIKASI & EVALUASI PERFORMA
+# ==========================================
+print("Mulai melatih model dan menghitung akurasi...")
+feature_sets = {'LBP': X_lbp, 'HOG': X_hog, 'GLCM': X_glcm}
+classifiers = {
+    'SVM': SVC(kernel='linear', random_state=42),
+    'Random Forest': RandomForestClassifier(n_estimators=100, random_state=42)
+}
+
+results = {}
+
+for f_name, X_data in feature_sets.items():
+    # Split: 80% Train, 20% Test
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_data, y, test_size=0.2, random_state=42, stratify=y
+    )
+    for c_name, clf in classifiers.items():
         clf.fit(X_train, y_train)
-        preds = clf.predict(X_test)
-        acc = accuracy_score(y_test, preds)
-        
-        # PERBAIKAN: Menyimpan hasil akurasi ke dalam dictionary pendukung
-        hasil_akurasi[clf_name].append(acc * 100)
+        y_pred = clf.predict(X_test)
+        acc = accuracy_score(y_test, y_pred)
+        results[f"{f_name} + {c_name}"] = acc
+        print(f"[Sukses] Akurasi Kombinasi [{f_name} + {c_name}]: {acc:.4f}")
 
-# ==========================================================
-# 4. VISUALISASI HASIL & DIAGRAM BATANG
-# ==========================================================
-x = np.arange(len(nama_fitur_list))
-width = 0.35
+# ==========================================
+# 5. VISUALISASI HASIL KINERJA
+# ==========================================
+plt.figure(figsize=(11, 6))
 
-fig, ax = plt.subplots(figsize=(8, 5))
-rects1 = ax.bar(x - width/2, hasil_akurasi['SVM'], width, label='SVM', color='#3498db')
-rects2 = ax.bar(x + width/2, hasil_akurasi['Random Forest'], width, label='Random Forest', color='#e67e22')
+combinations = list(results.keys())
+accuracies = list(results.values())
 
-ax.set_ylabel('Akurasi (%)')
-ax.set_title('Perbandingan Performa Ekstraksi Fitur Tekstur dan Classifier')
-ax.set_xticks(x)
-ax.set_xticklabels(nama_fitur_list)
-ax.set_ylim(0, 110)
-ax.legend()
-ax.grid(axis='y', linestyle='--', alpha=0.7)
+# Urutkan hasil agar grafik batang berurutan
+sorted_indices = np.argsort(accuracies)
+combinations = [combinations[i] for i in sorted_indices]
+accuracies = [accuracies[i] for i in sorted_indices]
 
-def autolabel(rects):
-    for rect in rects:
-        height = rect.get_height()
-        ax.annotate(f'{height:.1f}%',
-                    xy=(rect.get_x() + rect.get_width() / 2, height),
-                    xytext=(0, 3),  
-                    textcoords="offset points",
-                    ha='center', va='bottom')
+colors = ['#E6E6FA', '#DDA0DD', '#DA70D6', '#BA55D3', '#9370DB', '#7B68EE']
+bars = plt.barh(combinations, accuracies, color=colors, edgecolor='grey', height=0.6)
 
-autolabel(rects1)
-autolabel(rects2)
+plt.xlabel('Akurasi (0.0 - 1.0)', fontsize=11, fontweight='bold', labelpad=10)
+plt.title('Perbandingan Performa Ekstraksi Fitur Tekstur\n(5 Kelas DTD - 120 Gambar Per Kelas)', 
+          fontsize=13, fontweight='bold', pad=15)
+plt.xlim(0, 1.1)
+plt.grid(axis='x', linestyle='--', alpha=0.5)
+
+# Tampilkan label nilai akurasi di setiap bar
+for bar in bars:
+    width = bar.get_width()
+    plt.text(width + 0.01, bar.get_y() + bar.get_height()/2,
+             f'{width:.4f}',
+             va='center', ha='left', fontsize=10, fontweight='bold', color='black')
 
 plt.tight_layout()
-print("Menampilkan Grafik Analisis... (Tutup jendela grafik untuk melihat rangkuman teks)")
 plt.show()
-
-# ==========================================================
-# 5. PRINT RANGKUMAN TEKS KESIMPULAN
-# ==========================================================
-print("\n" + "="*60)
-print(f"{'Metode Fitur':<15} | {'Akurasi SVM':<15} | {'Akurasi Random Forest':<15}")
-print("="*60)
-for idx, f_name in enumerate(nama_fitur_list):
-    print(f"{f_name:<15} | {hasil_akurasi['SVM'][idx]:.2f}%{'' : <8} | {hasil_akurasi['Random Forest'][idx]:.2f}%")
-print("="*60)
